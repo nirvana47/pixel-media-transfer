@@ -26,3 +26,11 @@ A macOS `.command` script for transferring photos and videos to an Android phone
    ```bash
    chmod +x "Transfer to Pixel XL.command"
    ```
+2. Double-click the file in Finder, or run it from Terminal:
+   ```bash
+   ./Transfer\ to\ Pixel\ XL.command
+   ```
+
+## Notes
+This script was built for a personal workflow and is still being refined.
+
