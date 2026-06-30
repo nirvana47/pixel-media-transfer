@@ -348,7 +348,7 @@ for f in "${files_to_transfer[@]}"; do
                     conversion_type="fast"
                     draw_status "$current_index" "$TOTAL_TO_TRANSFER" "remuxing ${f:t}"
                     TMPOUT="${fast_output:r}.partial.mp4"; CURRENT_TMPOUT="$TMPOUT"
-                    if ! ffmpeg -y -i "$f" -map 0:v:0 -map 0:a:0? -dn -map_metadata 0 \
+                    if ! ffmpeg -y -i "$f" -map 0:v:0 -map "0:a:0?" -dn -map_metadata 0 \
                             -c copy -movflags +faststart -f mp4 "$TMPOUT" >/dev/null 2>"$FFERR"; then
                         rm -f "$TMPOUT"; CURRENT_TMPOUT=""
                         log_failure "$f" "ffmpeg remux failed. ffmpeg stderr (last lines):\n$(tail -n 12 "$FFERR")"
@@ -365,7 +365,7 @@ for f in "${files_to_transfer[@]}"; do
                 conversion_type="slow"
                 draw_status "$current_index" "$TOTAL_TO_TRANSFER" "transcoding ${f:t}"
                 TMPOUT="${reencoded_output:r}.partial.mp4"; CURRENT_TMPOUT="$TMPOUT"
-                if ! ffmpeg -y -i "$f" -map 0:v:0 -map 0:a:0? -dn -map_metadata 0 \
+                if ! ffmpeg -y -i "$f" -map 0:v:0 -map "0:a:0?" -dn -map_metadata 0 \
                         -c:v libx264 -crf "$ENC_CRF" -preset "$ENC_PRESET" \
                         -c:a aac -b:a "${ENC_AUDIO_KBPS}k" -movflags +faststart -f mp4 "$TMPOUT" >/dev/null 2>"$FFERR"; then
                     rm -f "$TMPOUT"; CURRENT_TMPOUT=""
