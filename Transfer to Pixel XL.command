@@ -389,7 +389,7 @@ for f in "${files_to_transfer[@]}"; do
         break
     fi
 
-    # Path-preserving destination name (avoids Sid/Shivani collisions)
+    # Path-preserving destination name (avoids filename collisions)
     if [[ "$dir_part" == "." ]]; then
         push_basename="${FILE_TO_PUSH:t}"
     else
