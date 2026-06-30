@@ -58,6 +58,18 @@ ENC_CRF=18
 ENC_PRESET=slow
 ENC_AUDIO_KBPS=192
 
+# If you MANUALLY move source files into a subfolder literally named "Original",
+# this skips them so they aren't transferred twice. Note: you do NOT need such a
+# folder — your source files are never moved/altered (converts go to the separate
+# mp4_h264_fast/ and mp4_hevc_reencoded/ trees), so the in-place source already
+# IS the preserved original. Set to false if you have a legit folder named Original
+# whose contents you DO want transferred.
+EXCLUDE_ORIGINAL_DIR=true
+
+# Files >= this many MB get adb's native live % on their own line (so big videos
+# don't look frozen). Smaller files stay quiet on the single status line.
+PROGRESS_MIN_MB=25
+
 KNOWN_EXTS=(mp4 mov m4v jpg jpeg png heic heif gif tiff tif dng webp 3gp)
 IGNORE_EXTS=(aae dat txt log xtag ds_store)
 
@@ -207,7 +219,7 @@ skipped_count=0
 for f in $all_files; do
     # Exclude our own outputs/logs and the originals archive
     [[ "$f" == mp4_h264_fast/* || "$f" == mp4_hevc_reencoded/* ]] && continue
-    [[ "$f" == */Original/* || "$f" == Original/* ]] && continue
+    [[ "$EXCLUDE_ORIGINAL_DIR" == true && ( "$f" == */Original/* || "$f" == Original/* ) ]] && continue
     [[ "$f" == transfer_history.txt || "$f" == transfer_failed.txt || "$f" == transfer_failed.log ]] && continue
 
     ext="${f:e:l}"                       # extension, lowercased — no subshell
@@ -251,6 +263,7 @@ slow_encode_count=0
 pre_converted_pushed=0
 pre_compliant_pushed=0
 conversion_fail_count=0
+typeset -A _seen_dest          # tracks flattened device names used this run (fix #2)
 
 # ==============================================================================
 # MAIN LOOP — stream files one-by-one, append to history register as we go
@@ -272,7 +285,9 @@ for f in "${files_to_transfer[@]}"; do
 
     if [[ "${f:l}" == *.mov || "${f:l}" == *.mp4 ]]; then
         is_video_conversion=true
-        raw_name="${${f:t}:r}"          # basename without extension
+        # Embed the SOURCE extension in the convert name so clip.mov and clip.mp4
+        # in the same folder don't collide (fix #5). e.g. clip_mov.mp4 / clip_mp4.mp4
+        raw_name="${${f:t}:r}_${f:e:l}"
         fast_output="mp4_h264_fast/${dir_part}/${raw_name}.mp4"
         reencoded_output="mp4_hevc_reencoded/${dir_part}/${raw_name}.mp4"
 
@@ -374,19 +389,42 @@ for f in "${files_to_transfer[@]}"; do
         break
     fi
 
-    # Path-preserving destination name (avoids filename collisions)
+    # Path-preserving destination name (avoids Sid/Shivani collisions)
     if [[ "$dir_part" == "." ]]; then
         push_basename="${FILE_TO_PUSH:t}"
     else
         safe_prefix="${dir_part//\//_}"; safe_prefix="${safe_prefix// /_}"
         push_basename="${safe_prefix}_${FILE_TO_PUSH:t}"
     fi
+
+    # Dedupe flattened names within this run (fix #2): if two different source
+    # paths flatten to the same device name, append _2, _3, ... to later ones.
+    if [[ -n "${_seen_dest[$push_basename]}" ]]; then
+        name_root="${push_basename:r}"; name_ext="${push_basename:e}"
+        n=2
+        while [[ -n "${_seen_dest[${name_root}_${n}.${name_ext}]}" ]]; do (( n += 1 )); done
+        push_basename="${name_root}_${n}.${name_ext}"
+    fi
+    _seen_dest[$push_basename]=1
     PUSH_DEST="${TARGET_DIR}${push_basename}"
 
     draw_status "$current_index" "$TOTAL_TO_TRANSFER" "📤 ${f:t} (${FILE_MB}MB)"
 
-    ADB_ERR=$(adb push "$FILE_TO_PUSH" "$PUSH_DEST" 2>&1 >/dev/null)
-    if [ $? -eq 0 ]; then
+    # Large files: show adb's native live % on its own line (fix #4). Small files
+    # stay quiet on the single status line. Errors captured to FFERR either way.
+    if (( FILE_MB >= PROGRESS_MIN_MB )); then
+        printf "\n"   # drop below the status line so the live bar has its own row
+        # Modern adb prints a live % to stdout by default; let it through.
+        adb push "$FILE_TO_PUSH" "$PUSH_DEST" 2>"$FFERR"
+        ADB_STATUS=$?
+        ADB_ERR="$(tail -n 3 "$FFERR")"
+        printf "\033[1A\r\033[K"   # step back up and clear the progress row
+    else
+        ADB_ERR=$(adb push "$FILE_TO_PUSH" "$PUSH_DEST" 2>&1 >/dev/null)
+        ADB_STATUS=$?
+    fi
+
+    if [ $ADB_STATUS -eq 0 ]; then
         echo "$f" >> "$HISTORY_FILE"          # the register: noted immediately on success
         SPACE_BUDGET=$(( SPACE_BUDGET - FILE_SIZE ))
         TOTAL_BYTES_SENT=$(( TOTAL_BYTES_SENT + FILE_SIZE ))
