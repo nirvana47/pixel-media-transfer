@@ -1,6 +1,6 @@
 # Transfer to Pixel XL
 
-A macOS `.command` script for transferring photos and videos to an Android phone over `adb`.
+A macOS `.command` script for transferring photos and videos to an Android phone over `adb`. The script is optimized for reliability over elegance, which is the right tradeoff for me for bulk media transfer.
 
 ## What it does
 
