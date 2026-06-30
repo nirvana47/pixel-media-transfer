@@ -66,10 +66,6 @@ ENC_AUDIO_KBPS=192
 # whose contents you DO want transferred.
 EXCLUDE_ORIGINAL_DIR=true
 
-# Files >= this many MB get adb's native live % on their own line (so big videos
-# don't look frozen). Smaller files stay quiet on the single status line.
-PROGRESS_MIN_MB=25
-
 KNOWN_EXTS=(mp4 mov m4v jpg jpeg png heic heif gif tiff tif dng webp 3gp)
 IGNORE_EXTS=(aae dat txt log xtag ds_store)
 
@@ -114,7 +110,10 @@ _cleanup() {
 }
 trap _cleanup INT TERM
 
-# Self-overwriting status line with a progress bar (NO subshells -> no title strobe)
+# Self-overwriting status line. Plain ASCII + hard-truncated to terminal width so
+# it can NEVER wrap onto a second row (wrapping was what stranded fragments and
+# made the bar look frozen). No emoji here: they render 2 cols but count as 1,
+# which breaks width math.
 draw_status() {
     local idx=$1 tot=$2 msg=$3
     local pct=$(( tot > 0 ? idx * 100 / tot : 0 ))
@@ -123,8 +122,11 @@ draw_status() {
     printf -v pad '%*s' $filled '';          h=${pad// /#}
     printf -v pad '%*s' $((20 - filled)) ''; d=${pad// /-}
     local tail=""
-    (( conversion_fail_count > 0 )) && tail=" | ⚠️${conversion_fail_count} failed"
-    printf "\r\033[K[%s%s] %3d%% [%d/%d] %s%s" "$h" "$d" "$pct" "$idx" "$tot" "${msg[1,42]}" "$tail"
+    (( conversion_fail_count > 0 )) && tail=" | ${conversion_fail_count} failed"
+    # Assemble, then hard-cap to (terminal width - 1) so the cursor never wraps.
+    local cols=${COLUMNS:-80}
+    local line="[${h}${d}] ${pct}% [${idx}/${tot}] ${msg}${tail}"
+    printf "\r\033[K%s" "${line[1,$((cols - 1))]}"
 }
 
 log_failure() {
@@ -309,7 +311,7 @@ for f in "${files_to_transfer[@]}"; do
                 mac_disk_blocked=true; break
             fi
 
-            draw_status "$current_index" "$TOTAL_TO_TRANSFER" "🔍 probing ${f:t}"
+            draw_status "$current_index" "$TOTAL_TO_TRANSFER" "probing ${f:t}"
 
             # Explicit stream selectors avoid mebx/metadata-stream confusion
             v_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$f" 2>"$FFERR")
@@ -327,11 +329,14 @@ for f in "${files_to_transfer[@]}"; do
                 else
                     # FAST REMUX (lossless). Temp keeps a .mp4 extension + -f mp4 so
                     # ffmpeg can pick the muxer (the old ".tmp" name broke this).
+                    # -map v:0 + a:0? + -dn drops iPhone 'mebx' timed-metadata
+                    # streams that otherwise make ffmpeg abort ("no decoder for none").
                     mkdir -p "mp4_h264_fast/${dir_part}"
                     conversion_type="fast"
-                    draw_status "$current_index" "$TOTAL_TO_TRANSFER" "⚡ remuxing ${f:t}"
+                    draw_status "$current_index" "$TOTAL_TO_TRANSFER" "remuxing ${f:t}"
                     TMPOUT="${fast_output:r}.partial.mp4"; CURRENT_TMPOUT="$TMPOUT"
-                    if ! ffmpeg -y -i "$f" -c copy -movflags +faststart -f mp4 "$TMPOUT" >/dev/null 2>"$FFERR"; then
+                    if ! ffmpeg -y -i "$f" -map 0:v:0 -map 0:a:0? -dn -map_metadata 0 \
+                            -c copy -movflags +faststart -f mp4 "$TMPOUT" >/dev/null 2>"$FFERR"; then
                         rm -f "$TMPOUT"; CURRENT_TMPOUT=""
                         log_failure "$f" "ffmpeg remux failed. ffmpeg stderr (last lines):\n$(tail -n 12 "$FFERR")"
                         draw_status "$current_index" "$TOTAL_TO_TRANSFER" "remux FAILED ${f:t}"
@@ -341,11 +346,14 @@ for f in "${files_to_transfer[@]}"; do
                 fi
             else
                 # HQ TRANSCODE (HEVC etc. -> H.264). Same .mp4 temp + -f mp4 fix.
+                # -map v:0 + a:0? + -dn drops 'mebx' metadata streams (the cause of
+                # the "no decoder for none" failures). Quality flags unchanged.
                 mkdir -p "mp4_hevc_reencoded/${dir_part}"
                 conversion_type="slow"
-                draw_status "$current_index" "$TOTAL_TO_TRANSFER" "⚙️ transcoding ${f:t}"
+                draw_status "$current_index" "$TOTAL_TO_TRANSFER" "transcoding ${f:t}"
                 TMPOUT="${reencoded_output:r}.partial.mp4"; CURRENT_TMPOUT="$TMPOUT"
-                if ! ffmpeg -y -i "$f" -c:v libx264 -crf "$ENC_CRF" -preset "$ENC_PRESET" \
+                if ! ffmpeg -y -i "$f" -map 0:v:0 -map 0:a:0? -dn -map_metadata 0 \
+                        -c:v libx264 -crf "$ENC_CRF" -preset "$ENC_PRESET" \
                         -c:a aac -b:a "${ENC_AUDIO_KBPS}k" -movflags +faststart -f mp4 "$TMPOUT" >/dev/null 2>"$FFERR"; then
                     rm -f "$TMPOUT"; CURRENT_TMPOUT=""
                     log_failure "$f" "ffmpeg transcode failed. ffmpeg stderr (last lines):\n$(tail -n 12 "$FFERR")"
@@ -408,21 +416,13 @@ for f in "${files_to_transfer[@]}"; do
     _seen_dest[$push_basename]=1
     PUSH_DEST="${TARGET_DIR}${push_basename}"
 
-    draw_status "$current_index" "$TOTAL_TO_TRANSFER" "📤 ${f:t} (${FILE_MB}MB)"
+    draw_status "$current_index" "$TOTAL_TO_TRANSFER" "pushing ${f:t} (${FILE_MB}MB)"
 
-    # Large files: show adb's native live % on its own line (fix #4). Small files
-    # stay quiet on the single status line. Errors captured to FFERR either way.
-    if (( FILE_MB >= PROGRESS_MIN_MB )); then
-        printf "\n"   # drop below the status line so the live bar has its own row
-        # Modern adb prints a live % to stdout by default; let it through.
-        adb push "$FILE_TO_PUSH" "$PUSH_DEST" 2>"$FFERR"
-        ADB_STATUS=$?
-        ADB_ERR="$(tail -n 3 "$FFERR")"
-        printf "\033[1A\r\033[K"   # step back up and clear the progress row
-    else
-        ADB_ERR=$(adb push "$FILE_TO_PUSH" "$PUSH_DEST" 2>&1 >/dev/null)
-        ADB_STATUS=$?
-    fi
+    # Single clean push. (The earlier per-file adb live-% line was removed: its
+    # cursor-up cleanup could strand stray lines, and the real bottleneck here is
+    # transcode CPU, not the USB push.)
+    ADB_ERR=$(adb push "$FILE_TO_PUSH" "$PUSH_DEST" 2>&1 >/dev/null)
+    ADB_STATUS=$?
 
     if [ $ADB_STATUS -eq 0 ]; then
         echo "$f" >> "$HISTORY_FILE"          # the register: noted immediately on success
