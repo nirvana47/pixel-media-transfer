@@ -114,18 +114,30 @@ trap _cleanup INT TERM
 # it can NEVER wrap onto a second row (wrapping was what stranded fragments and
 # made the bar look frozen). No emoji here: they render 2 cols but count as 1,
 # which breaks width math.
+#
+# The BAR tracks PHONE STORAGE consumed this run, NOT the file count. A run can
+# stop early when the 14GB phone fills, so a file-count bar (e.g. 80/3038 = 2%)
+# would look stuck near empty even though you'd actually filled the phone. We
+# instead show how much of the usable phone budget is now used: it climbs to
+# ~100% exactly as the phone fills. The [idx/tot] file counter stays as text so
+# you still see file-by-file movement.
 draw_status() {
     local idx=$1 tot=$2 msg=$3
-    local pct=$(( tot > 0 ? idx * 100 / tot : 0 ))
+    local pct=0
+    (( INITIAL_BUDGET > 0 )) && pct=$(( (INITIAL_BUDGET - SPACE_BUDGET) * 100 / INITIAL_BUDGET ))
+    (( pct < 0 ))   && pct=0
+    (( pct > 100 )) && pct=100
     local filled=$(( pct / 5 )); (( filled > 20 )) && filled=20
     local pad h d
     printf -v pad '%*s' $filled '';          h=${pad// /#}
     printf -v pad '%*s' $((20 - filled)) ''; d=${pad// /-}
+    # Cumulative failure tally — labeled "so far" so it can't be misread as the
+    # CURRENT file failing (it sits next to the live action message).
     local tail=""
-    (( conversion_fail_count > 0 )) && tail=" | ${conversion_fail_count} failed"
+    (( conversion_fail_count > 0 )) && tail=" | ${conversion_fail_count} failed so far"
     # Assemble, then hard-cap to (terminal width - 1) so the cursor never wraps.
     local cols=${COLUMNS:-80}
-    local line="[${h}${d}] ${pct}% [${idx}/${tot}] ${msg}${tail}"
+    local line="[${h}${d}] ${pct}% phone | [${idx}/${tot}] ${msg}${tail}"
     printf "\r\033[K%s" "${line[1,$((cols - 1))]}"
 }
 
@@ -199,6 +211,7 @@ SPACE_BUDGET=$(( ANDROID_FREE - BUFFER_BYTES ))
 if (( SPACE_BUDGET <= 0 )); then
     echo "⚠️ Android storage low (<500MB cushion). Clear the phone and retry."; _pause_on_exit; exit 0
 fi
+INITIAL_BUDGET=$SPACE_BUDGET   # denominator for the storage-based progress bar
 
 # ==============================================================================
 # SINGLE-PASS SCAN  (one glob, pure zsh expansions, no per-file subshells)
