@@ -56,7 +56,7 @@ I plan to add a separate section later that documents edge cases and where this 
 
 ### Why Some Videos Are Converted
 
-The goal is not to convert everything. The goal is to make the minimum change needed so the files behave well on the Pixel and in Google Photos. I had written a script just for conversion earlier, using ffmpeg and ffprobe. I have kept most of those elements present in the current, broader script.
+Not all iPhone videos are recognized and paresed correctly by Google Photos backup service. After lot of manual trial-and-error, I identified the issue and the file-format markers.
 
 - If a photo or video is already Android-friendly, the script just transfers it.
 - If a `.mov` video already uses friendly codecs, the script can repackage it as an `.mp4` without re-encoding the video.
