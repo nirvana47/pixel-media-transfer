@@ -11,7 +11,7 @@
 # Folder selection order:
 #   1) a path passed as an argument (command line)
 #   2) a graphical folder picker (double-click in Finder)
-#   3) the folder this .command file lives in (picker cancelled)
+#   3) exit cleanly if the picker is cancelled
 # ==============================================================================
 
 # ==============================================================================
@@ -32,7 +32,10 @@ on error
 end try
 EOF
 )
-    [[ -z "$SOURCE_DIR" ]] && SOURCE_DIR="$SCRIPT_DIR"
+    if [[ -z "$SOURCE_DIR" ]]; then
+        echo "Folder selection cancelled. No files transferred."
+        exit 0
+    fi
 fi
 
 if [[ ! -d "$SOURCE_DIR" ]]; then

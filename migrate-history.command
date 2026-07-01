@@ -43,7 +43,10 @@ on error
 end try
 EOF
 )
-    [[ -z "$SOURCE_DIR" ]] && SOURCE_DIR="$SCRIPT_DIR"
+    if [[ -z "$SOURCE_DIR" ]]; then
+        echo "Folder selection cancelled. Nothing migrated."
+        exit 0
+    fi
 fi
 
 if [[ ! -d "$SOURCE_DIR" ]]; then
