@@ -75,6 +75,34 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 setopt NULL_GLOB
 setopt NOCASEGLOB
 
+# Load zsh's built-in stat (zstat). This reads a file's size from its inode
+# WITHOUT forking the external `stat` command per file (over ~10k files that
+# would be 10k process spawns). zstat is a shell builtin: ~10k calls run in well
+# under a second and read NO file contents — only inode metadata the directory
+# walk already pulled into the OS cache. zstat ships with every macOS zsh; if it
+# is somehow missing we hard-stop rather than silently degrade.
+zmodload -F zsh/stat b:zstat 2>/dev/null || {
+    echo "❌ zsh/stat module unavailable — cannot build history keys. Aborting."
+    echo "Press Return to close this window..."; read
+    exit 1
+}
+
+# Build the history key for a source file:  path|size
+# Size is read from the INODE (no hash, no full-file read). We deliberately use
+# size, NOT mtime: mtime changes when a file is re-copied on the Mac (plain `cp`,
+# AirDrop, etc.), which would spuriously re-transfer it. Size survives every copy
+# method, and two genuinely different photos/videos essentially never share an
+# exact byte count — so path|size skips unchanged files yet still treats a reused
+# iPhone name (different content -> different size) as a new file.
+# Result is returned in the global $HKEY (NOT printed) so callers invoke it as a
+# plain command — NO `$(...)` substitution, hence NO subshell fork per file.
+_hist_key() {
+    local p="$1"
+    typeset -A _st
+    zstat -H _st -- "$p" 2>/dev/null && HKEY="${p}|${_st[size]}" || HKEY="${p}|0"
+}
+
+
 # Reusable scratch file for capturing ffmpeg/ffprobe stderr (NO per-file mktemp)
 FFERR="${TMPDIR:-/tmp}/transfer_fferr.$$"
 
@@ -194,11 +222,20 @@ adb shell mkdir -p "$TARGET_DIR" 2>/dev/null
 
 # ==============================================================================
 # HISTORY PRUNING (drops entries whose source no longer exists -> auto reset)
+#
+# History lines are "path|size". An entry is kept only if the file still exists
+# AND its current size still matches. If the file is gone -> dropped (auto-reset
+# when you delete originals). If the file was replaced with different content
+# (different size, e.g. a reused iPhone name) -> dropped so it re-transfers.
 # ==============================================================================
 if [[ -s "$HISTORY_FILE" ]]; then
     tmp_log=$(mktemp)
     while IFS= read -r entry; do
-        [[ -f "$entry" ]] && echo "$entry" >> "$tmp_log"
+        [[ -z "$entry" ]] && continue
+        e_path="${entry%|*}"          # strip trailing |size
+        [[ -f "$e_path" ]] || continue
+        _hist_key "$e_path"
+        [[ "$HKEY" == "$entry" ]] && print -r -- "$entry" >> "$tmp_log"
     done < "$HISTORY_FILE"
     mv "$tmp_log" "$HISTORY_FILE"
 fi
@@ -221,6 +258,8 @@ printf "🔍 Scanning folder for media files (one quick pass)...\n"
 typeset -A _known_ext _ignore_ext _history_set
 for e in "${KNOWN_EXTS[@]}";  do _known_ext[$e]=1;  done
 for e in "${IGNORE_EXTS[@]}"; do _ignore_ext[$e]=1; done
+# Index history by full "path|size" key. A file counts as "already done" only if
+# its current path+size produces this exact key.
 while IFS= read -r entry; do
     [[ -n "$entry" ]] && _history_set[$entry]=1
 done < "$HISTORY_FILE"
@@ -244,7 +283,9 @@ for f in $all_files; do
     if [[ -z "${_known_ext[$ext]}" ]]; then
         unknown_files+=("$f"); continue
     fi
-    if [[ -n "${_history_set[$f]}" ]]; then
+    # Already done only if the exact path|size key matches (unchanged file).
+    _hist_key "$f"
+    if [[ -n "${_history_set[$HKEY]}" ]]; then
         (( skipped_count += 1 )); continue
     fi
     files_to_transfer+=("$f")
@@ -438,7 +479,8 @@ for f in "${files_to_transfer[@]}"; do
     ADB_STATUS=$?
 
     if [ $ADB_STATUS -eq 0 ]; then
-        echo "$f" >> "$HISTORY_FILE"          # the register: noted immediately on success
+        _hist_key "$f"
+        print -r -- "$HKEY" >> "$HISTORY_FILE"   # register: path|size, noted on success
         SPACE_BUDGET=$(( SPACE_BUDGET - FILE_SIZE ))
         TOTAL_BYTES_SENT=$(( TOTAL_BYTES_SENT + FILE_SIZE ))
         (( success_count += 1 ))
