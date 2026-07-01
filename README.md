@@ -70,5 +70,12 @@ This started as a utility script, but it has turned into a small systems design 
 
 The main tradeoff is that the script is intentionally cautious. It is not trying to be the fastest possible transfer tool or cover all of my manual work scenarios. It is trying to be understandable, repeatable, and safe enough that I can trust it with a large media archive.
 
+### Known Limitations
+
+- History is reliant on me not deleting the text files storing file transfer information
+- Some files have missing metadata that can be inferred from file data, but currently that is not being fixed
+- Relying on name + path + filesize for de-duping (i.e., checking whether the file has already been transferred to Pixel or not), which is not as robust
+
+
 ## Notes
 This script was built for a personal workflow and is still being refined.
