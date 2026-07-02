@@ -1,11 +1,11 @@
 #!/bin/zsh
 
 # ==============================================================================
-# Transfer to Pixel XL — double-clickable macOS launcher (.command)
+# Transfer to Pixel — double-clickable macOS launcher (.command)
 # ------------------------------------------------------------------------------
 # HOW TO USE:
 #   1. Save with the .command extension.
-#   2. Make it executable ONCE:  chmod +x "Transfer to Pixel XL.command"
+#   2. Make it executable ONCE:  chmod +x "Transfer-to-Pixel.command"
 #   3. Double-click in Finder -> opens Terminal and runs.
 #
 # Folder selection order:
@@ -70,7 +70,7 @@ ENC_AUDIO_KBPS=192
 EXCLUDE_ORIGINAL_DIR=true
 
 KNOWN_EXTS=(mp4 mov m4v jpg jpeg png heic heif gif tiff tif dng webp 3gp)
-IGNORE_EXTS=(aae dat txt log xtag ds_store)
+IGNORE_EXTS=(aae dat txt log xtag ds_store bak MOV_original)
 
 # Homebrew paths (double-clicked Finder sessions often miss these)
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
